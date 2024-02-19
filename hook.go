@@ -10,12 +10,14 @@ import (
 
 var _ logrus.Hook = (*LogKafkaHook)(nil)
 
+type HookFilter func(entry *logrus.Entry) bool
+
 type LogKafkaHook struct {
 	levels                       []logrus.Level
 	topics                       []string
 	producer                     sarama.AsyncProducer
 	keyFormatter, valueFormatter logrus.Formatter
-	mustHasFields                []string
+	filters                      []HookFilter
 }
 
 var _ logrus.Formatter = (*defaultKeyFormatter)(nil)
@@ -28,27 +30,61 @@ func (d *defaultKeyFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 
 type LogKafkaHookOptionFunc func(*LogKafkaHook)
 
-func WithLogKafkaHookLevels(levels []logrus.Level) LogKafkaHookOptionFunc {
+func WithHookLevels(levels []logrus.Level) LogKafkaHookOptionFunc {
 	return func(l *LogKafkaHook) {
 		l.levels = levels
 	}
 }
 
-func WithLogKafkaHookValueFormatter(formatter logrus.Formatter) LogKafkaHookOptionFunc {
+func WithHookValueFormatter(formatter logrus.Formatter) LogKafkaHookOptionFunc {
 	return func(l *LogKafkaHook) {
 		l.valueFormatter = formatter
 	}
 }
 
-func WithLogKafkaHookKeyFormatter(formatter logrus.Formatter) LogKafkaHookOptionFunc {
+func WithHookKeyFormatter(formatter logrus.Formatter) LogKafkaHookOptionFunc {
 	return func(l *LogKafkaHook) {
 		l.keyFormatter = formatter
 	}
 }
 
-func WithLogKafkaHookMustHasFields(fields []string) LogKafkaHookOptionFunc {
+func hookMustHasFields(fields []string) HookFilter {
+	return func(entry *logrus.Entry) bool {
+		for _, v := range fields {
+			if _, ok := entry.Data[v]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func WithHookMustHasFields(fields []string) LogKafkaHookOptionFunc {
 	return func(l *LogKafkaHook) {
-		l.mustHasFields = fields
+		l.filters = append(l.filters, hookMustHasFields(fields))
+	}
+}
+
+func hookMustNotHasFields(fields []string) HookFilter {
+	return func(entry *logrus.Entry) bool {
+		for _, v := range fields {
+			if _, ok := entry.Data[v]; ok {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func WithHookMustNotHasFields(fields []string) LogKafkaHookOptionFunc {
+	return func(l *LogKafkaHook) {
+		l.filters = append(l.filters, hookMustNotHasFields(fields))
+	}
+}
+
+func WithHookFilters(filters ...HookFilter) LogKafkaHookOptionFunc {
+	return func(l *LogKafkaHook) {
+		l.filters = append(l.filters, filters...)
 	}
 }
 
@@ -86,8 +122,8 @@ func (l *LogKafkaHook) Levels() []logrus.Level {
 }
 
 func (l *LogKafkaHook) Fire(entry *logrus.Entry) error {
-	for _, v := range l.mustHasFields {
-		if _, ok := entry.Data[v]; !ok {
+	for _, v := range l.filters {
+		if !v(entry) {
 			return nil
 		}
 	}
