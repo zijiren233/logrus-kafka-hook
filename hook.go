@@ -51,11 +51,11 @@ func WithHookKeyFormatter(formatter logrus.Formatter) LogKafkaHookOptionFunc {
 func hookMustHasFields(fields []string) HookFilter {
 	return func(entry *logrus.Entry) bool {
 		for _, v := range fields {
-			if _, ok := entry.Data[v]; !ok {
-				return false
+			if _, ok := entry.Data[v]; ok {
+				return true
 			}
 		}
-		return true
+		return false
 	}
 }
 
