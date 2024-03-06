@@ -12,12 +12,15 @@ var _ logrus.Hook = (*LogKafkaHook)(nil)
 
 type HookFilter func(entry *logrus.Entry) bool
 
+type DynamicTopicsFunc func(entry *logrus.Entry) []string
+
 type LogKafkaHook struct {
 	levels                       []logrus.Level
 	topics                       []string
 	producer                     sarama.AsyncProducer
 	keyFormatter, valueFormatter logrus.Formatter
 	filters                      []HookFilter
+	dynamicTopics                DynamicTopicsFunc
 }
 
 var _ logrus.Formatter = (*defaultKeyFormatter)(nil)
@@ -33,6 +36,12 @@ type LogKafkaHookOptionFunc func(*LogKafkaHook)
 func WithHookLevels(levels []logrus.Level) LogKafkaHookOptionFunc {
 	return func(l *LogKafkaHook) {
 		l.levels = levels
+	}
+}
+
+func WithDynamicTopicsFunc(f DynamicTopicsFunc) LogKafkaHookOptionFunc {
+	return func(l *LogKafkaHook) {
+		l.dynamicTopics = f
 	}
 }
 
@@ -158,13 +167,21 @@ func (l *LogKafkaHook) Fire(entry *logrus.Entry) error {
 		value = sarama.ByteEncoder(b2)
 	}
 
-	for _, topic := range l.topics {
-		msg := &sarama.ProducerMessage{
-			Topic: topic,
-			Key:   key,
-			Value: value,
-		}
-		l.producer.Input() <- msg
+	tss := [][]string{l.topics}
+	if l.dynamicTopics != nil {
+		tss = append(tss, l.dynamicTopics(entry))
 	}
+
+	for _, topics := range tss {
+		for _, topic := range topics {
+			msg := &sarama.ProducerMessage{
+				Topic: topic,
+				Key:   key,
+				Value: value,
+			}
+			l.producer.Input() <- msg
+		}
+	}
+
 	return nil
 }
